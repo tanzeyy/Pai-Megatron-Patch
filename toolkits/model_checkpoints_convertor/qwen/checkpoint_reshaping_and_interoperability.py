@@ -13,17 +13,24 @@
 # limitations under the License.
 
 import argparse
-import random
+import json
 import os
+import random
 import re
 import sys
 import types
+
 import numpy as np
 import torch
-import json
-from transformers import AutoTokenizer, GPT2Config, LlamaConfig
-from configuration_qwen import QWenConfig, QWenConfig_14b
-from transformers.modeling_utils import WEIGHTS_INDEX_NAME, WEIGHTS_NAME, shard_checkpoint
+from configuration_qwen import QWenConfig
+from configuration_qwen import QWenConfig_14b
+from transformers import AutoTokenizer
+from transformers import GPT2Config
+from transformers import LlamaConfig
+from transformers.modeling_utils import WEIGHTS_INDEX_NAME
+from transformers.modeling_utils import WEIGHTS_NAME
+from transformers.modeling_utils import shard_checkpoint
+
 seed = 1234
 random.seed(seed)
 np.random.seed(seed)
@@ -324,8 +331,9 @@ def get_megatron_sharded_states(args, tp_size, pp_size, pp_rank):
     tp_state_dicts = []
     for i in range(tp_size):
         sub_dir_name = f"mp_rank_{i:02d}" if pp_size == 1 else f"mp_rank_{i:02d}_{pp_rank:03d}"
-        checkpoint_name = os.listdir(os.path.join(args.load_path, sub_dir_name))[0]
+        checkpoint_name = [fn for fn in os.listdir(os.path.join(args.load_path, sub_dir_name)) if 'model_' in fn][0]
         checkpoint_path = os.path.join(args.load_path, sub_dir_name, checkpoint_name)
+        # breakpoint()
         state_dict = torch.load(checkpoint_path, map_location="cpu")
         tp_state_dicts.append(state_dict)
     return tp_state_dicts
@@ -710,7 +718,7 @@ def convert_checkpoint_from_megatron_to_transformers(args):
     os.system("cp -rf " + config_path + "/tokenizer* " + args.save_path)
     os.system("cp -rf " + config_path + "/*.py " + args.save_path)
     os.system("cp -rf " + config_path + "/qwen.* " + args.save_path)
-    os.system("rm -rf "+args.load_path+"/mp_rank*/distrib*")
+    # os.system("rm -rf "+args.load_path+"/mp_rank*/distrib*")
 
     activation_function = "gelu"
 
@@ -814,6 +822,8 @@ def convert_checkpoint_from_megatron_to_transformers(args):
             )
         word_embeddings.append(embeddings)
 
+    # # breakpoint()
+    # print(word_embeddings)
     word_embeddings = torch.cat(word_embeddings, dim=0)
     word_embeddings = word_embeddings.to(dtype)
     output_state_dict["transformer.wte.weight"] = word_embeddings.clone()
@@ -843,6 +853,9 @@ def convert_checkpoint_from_megatron_to_transformers(args):
 
         # Extract the layers.
         for key, val in get_element_from_dict_by_path(tp_state_dicts[0], path).items():
+            if val is None:  # Skip `*._extra_state`
+                continue
+
             # Match the name.
             m = layer_re.match(key)
             # Stop if that's not a layer
